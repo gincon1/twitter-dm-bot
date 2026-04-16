@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.egg-info/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Sensitive data
+.env
+*.db
+*.log
+
+# Screenshots & artifacts
+artifacts/
+screenshots/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
