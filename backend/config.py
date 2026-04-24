@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     feishu_app_token: str = ""
     feishu_table_targets: str = ""
     feishu_table_accounts: str = ""
+    feishu_display_name_column: str = "显示名"
 
     # AdsPower
     adspower_host: str = "http://local.adspower.net"
@@ -49,6 +50,21 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Shanghai"
     runtime_db_path: str = "runtime.db"
     screenshot_dir: str = "artifacts/screenshots"
+
+    # OpenAI
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+
+    # Twitter password
+    twitter_password: str = "2580"
+
+    # Playwright timeouts (ms)
+    page_load_timeout: int = 45000
+    element_wait_timeout: int = 15000
+    button_click_timeout: int = 15000
+    login_check_timeout: int = 15000
+    type_delay_min: int = 1200
+    type_delay_max: int = 2500
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -106,6 +106,7 @@ def _normalize_account_status(value: Any) -> str:
 
 def _parse_target(item: dict) -> dict:
     f = item.get("fields", {})
+    display_name_col = settings.feishu_display_name_column or "显示名"
     return {
         "record_id": item.get("record_id", ""),
         "twitter_username": _as_text(f.get("Twitter用户名")).replace("@", "").strip(),
@@ -130,6 +131,7 @@ def _parse_target(item: dict) -> dict:
         "stage": _as_text(f.get("项目阶段")),
         "project_type": _as_text(f.get("项目类型")),
         "contact_role": _as_text(f.get("联系人角色")),
+        "display_name": _as_text(f.get(display_name_col)),
         "raw": item,
     }
 

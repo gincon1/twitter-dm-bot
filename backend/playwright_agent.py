@@ -27,8 +27,8 @@ def _first_existing(page: Page, selectors) -> Tuple[Optional[object], Optional[s
 def _wait_first_existing(
     page: Page,
     selectors,
-    timeout_ms: int = 8000,
-    poll_ms: int = 300,
+    timeout_ms: int = 15000,
+    poll_ms: int = 400,
     require_visible: bool = False,
 ) -> Tuple[Optional[object], Optional[str]]:
     deadline = time.time() + max(timeout_ms, 1000) / 1000.0
@@ -88,7 +88,6 @@ def _check_cannot_dm_to_target(page: Page) -> bool:
 
 
 def _is_logged_in(page: Page) -> bool:
-    # X 界面在不同语言/AB实验下 data-testid 经常变化，这里用多信号判断，避免误判。
     selectors = [
         '[data-testid="AppTabBar_Home_Link"]',
         '[data-testid="AppTabBar_DirectMessage_Link"]',
@@ -106,16 +105,16 @@ def _is_logged_in(page: Page) -> bool:
     return False
 
 
-def _wait_logged_in(page: Page, timeout_ms: int = 8000) -> bool:
+def _wait_logged_in(page: Page, timeout_ms: int = 15000) -> bool:
     deadline = time.time() + max(timeout_ms, 1000) / 1000.0
     while time.time() < deadline:
         if _is_logged_in(page):
             return True
-        page.wait_for_timeout(350)
+        page.wait_for_timeout(500)
     return _is_logged_in(page)
 
 
-def _goto_with_retry(page: Page, url: str, attempts: int = 3, timeout: int = 30000) -> None:
+def _goto_with_retry(page: Page, url: str, attempts: int = 3, timeout: int = 45000) -> None:
     last_err: Optional[Exception] = None
     for i in range(1, attempts + 1):
         try:
@@ -129,6 +128,63 @@ def _goto_with_retry(page: Page, url: str, attempts: int = 3, timeout: int = 300
         raise last_err
 
 
+def _handle_password_prompt(page: Page, password: str = "2580") -> bool:
+    """Detect and handle Twitter secondary password verification prompt."""
+    try:
+        password_dialog_selectors = [
+            'input[type="password"]',
+            'input[name="password"]',
+            'input[autocomplete="current-password"]',
+            'input[placeholder*="password" i]',
+            'input[placeholder*="密码"]',
+        ]
+        for sel in password_dialog_selectors:
+            loc = page.locator(sel)
+            if loc.count() > 0:
+                pw_input = loc.first
+                try:
+                    if not pw_input.is_visible():
+                        continue
+                except Exception:
+                    continue
+                pw_input.click(timeout=5000)
+                try:
+                    pw_input.fill("")
+                except Exception:
+                    pass
+                pw_input.type(password, delay=random.randint(40, 80))
+                page.wait_for_timeout(500)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(3000)
+                return True
+
+        password_texts = [
+            "Enter your password",
+            "输入密码",
+            "confirm your password",
+            "Re-enter your password",
+            "verify your password",
+        ]
+        for text in password_texts:
+            if page.get_by_text(text).count() > 0:
+                pw_inputs = page.locator('input[type="password"]')
+                if pw_inputs.count() > 0:
+                    pw_input = pw_inputs.first
+                    pw_input.click(timeout=5000)
+                    try:
+                        pw_input.fill("")
+                    except Exception:
+                        pass
+                    pw_input.type(password, delay=random.randint(40, 80))
+                    page.wait_for_timeout(500)
+                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(3000)
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def send_dm(
     ws_url: str,
     target_username: str,
@@ -137,6 +193,8 @@ def send_dm(
     twitter_account: str,
     screenshot_dir: str,
 ) -> Dict[str, object]:
+    from config import settings
+
     result: Dict[str, object] = {
         "account_id": account_id,
         "twitter_account": twitter_account,
@@ -167,19 +225,25 @@ def send_dm(
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.pages[0] if context.pages else context.new_page()
 
-        _goto_with_retry(page, "https://x.com/home", attempts=3, timeout=28000)
-        page.wait_for_timeout(1300)
+        _goto_with_retry(page, "https://x.com/home", attempts=3, timeout=45000)
+        page.wait_for_timeout(1800)
 
-        logged_in = _wait_logged_in(page, timeout_ms=8000)
+        # Check for password prompt after home page load
+        _handle_password_prompt(page, settings.twitter_password)
+
+        logged_in = _wait_logged_in(page, timeout_ms=15000)
         if not logged_in:
             result["status"] = "error"
             result["note"] = "not_logged_in"
             result["screenshot"] = _snapshot(page, screenshot_dir, f"not_logged_in_{target_username}")
             return result
 
-        # Preferred stable path: Messages -> New chat -> Search target -> Send
-        _goto_with_retry(page, "https://x.com/messages", attempts=3, timeout=30000)
-        page.wait_for_timeout(1700)
+        # Navigate to messages
+        _goto_with_retry(page, "https://x.com/messages", attempts=3, timeout=45000)
+        page.wait_for_timeout(2200)
+
+        # Check for password prompt after navigating to messages
+        _handle_password_prompt(page, settings.twitter_password)
 
         if _check_risk_signals(page):
             result["status"] = "captcha"
@@ -200,8 +264,8 @@ def send_dm(
                 'button:has-text("新建聊天")',
                 '[role="button"]:has-text("新建聊天")',
             ],
-            timeout_ms=10000,
-            poll_ms=350,
+            timeout_ms=15000,
+            poll_ms=400,
             require_visible=True,
         )
         if new_chat_btn is None:
@@ -210,8 +274,11 @@ def send_dm(
             result["screenshot"] = _snapshot(page, screenshot_dir, f"new_chat_missing_{target_username}")
             return result
 
-        new_chat_btn.click(timeout=10000)
-        page.wait_for_timeout(900)
+        new_chat_btn.click(timeout=15000)
+        page.wait_for_timeout(1200)
+
+        # Check for password prompt after clicking new chat
+        _handle_password_prompt(page, settings.twitter_password)
 
         search_box = None
         search_sel = None
@@ -249,13 +316,13 @@ def send_dm(
             result["screenshot"] = _snapshot(page, screenshot_dir, f"search_missing_{target_username}")
             return result
 
-        search_box.click(timeout=5000)
+        search_box.click(timeout=10000)
         try:
             search_box.fill("")
         except Exception:
             pass
         search_box.type(target_username.replace("@", ""), delay=50)
-        page.wait_for_timeout(2200)
+        page.wait_for_timeout(2800)
 
         target_row, target_row_sel = _first_existing(
             page,
@@ -273,8 +340,11 @@ def send_dm(
             result["screenshot"] = _snapshot(page, screenshot_dir, f"target_not_found_{target_username}")
             return result
 
-        target_row.click(timeout=10000)
-        page.wait_for_timeout(1800)
+        target_row.click(timeout=15000)
+        page.wait_for_timeout(2200)
+
+        # Check for password prompt after selecting target
+        _handle_password_prompt(page, settings.twitter_password)
 
         if _check_risk_signals(page):
             result["status"] = "captcha"
@@ -310,7 +380,7 @@ def send_dm(
             result["screenshot"] = _snapshot(page, screenshot_dir, f"composer_missing_{target_username}")
             return result
 
-        composer.click(timeout=5000)
+        composer.click(timeout=10000)
         try:
             composer.fill("")
         except Exception:
@@ -318,7 +388,7 @@ def send_dm(
 
         for char in message:
             composer.type(char, delay=random.randint(35, 90))
-        time.sleep(random.uniform(0.8, 1.6))
+        time.sleep(random.uniform(1.2, 2.5))
 
         send_btn, send_sel = _first_existing(
             page,
@@ -329,13 +399,13 @@ def send_dm(
             ],
         )
         if send_btn is not None:
-            send_btn.click(timeout=8000)
+            send_btn.click(timeout=10000)
             send_used = send_sel
         else:
             page.keyboard.press("Enter")
             send_used = "keyboard:Enter"
 
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3500)
 
         delivered = page.get_by_text(message).count() > 0
         result["status"] = "sent" if delivered else "sent_attempt"

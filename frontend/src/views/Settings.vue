@@ -139,6 +139,45 @@
     <div class="card settings-panel">
       <div class="settings-head">
         <div>
+          <div class="settings-kicker">AI Integration</div>
+          <h3>AI 配置</h3>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <div class="form-field">
+          <label>OpenAI API Key</label>
+          <input v-model="aiForm.openai_api_key" class="input" placeholder="sk-..." type="password" />
+        </div>
+        <div class="form-field">
+          <label>模型</label>
+          <select v-model="aiForm.openai_model" class="input">
+            <option value="gpt-4o-mini">GPT-4o-mini（推荐，快速低成本）</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-3.5-turbo">GPT-3.5-turbo</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Twitter 二级密码</label>
+          <input v-model="aiForm.twitter_password" class="input" placeholder="2580" />
+        </div>
+        <div class="form-field">
+          <label>飞书显示名列名</label>
+          <input v-model="aiForm.feishu_display_name_column" class="input" placeholder="显示名" />
+        </div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn btn-primary" :disabled="savingAI" @click="saveAIConfig">
+          {{ savingAI ? '保存中...' : '保存 AI 配置' }}
+        </button>
+        <span v-if="aiSaved" class="save-state">已保存</span>
+      </div>
+    </div>
+
+    <div class="card settings-panel">
+      <div class="settings-head">
+        <div>
           <div class="settings-kicker">Feishu Integration</div>
           <h3>飞书集成</h3>
         </div>
@@ -331,7 +370,9 @@ const loadingFeishu = ref(true)
 const savingFeishu = ref(false)
 const testingFeishu = ref(false)
 const testingWebhook = ref(false)
+const savingAI = ref(false)
 const feishuSaved = ref(false)
+const aiSaved = ref(false)
 const testOk = ref(false)
 const testMessage = ref('')
 const cleaningLogs = ref(false)
@@ -344,6 +385,12 @@ const feishuForm = reactive({
   feishu_table_targets: '',
   feishu_table_accounts: '',
   feishu_notify_webhook: ''
+})
+const aiForm = reactive({
+  openai_api_key: '',
+  openai_model: 'gpt-4o-mini',
+  twitter_password: '2580',
+  feishu_display_name_column: '显示名',
 })
 const maintenanceForm = reactive({
   logRetentionDays: 30,
@@ -379,6 +426,12 @@ const loadConfig = async () => {
   try {
     const { data } = await api.get('/config')
     Object.assign(configForm, data)
+    Object.assign(aiForm, {
+      openai_api_key: data.openai_api_key || '',
+      openai_model: data.openai_model || 'gpt-4o-mini',
+      twitter_password: data.twitter_password || '',
+      feishu_display_name_column: data.feishu_display_name_column || '显示名',
+    })
   } catch (e) {
     system.notify(getActionErrorMessage('加载策略配置', e), 'error')
   } finally {
@@ -476,6 +529,20 @@ const saveSyncDialog = async () => {
     system.notify(getActionErrorMessage('保存同步计划', e), 'error')
   } finally {
     savingSyncDialog.value = false
+  }
+}
+
+const saveAIConfig = async () => {
+  savingAI.value = true
+  try {
+    await api.post('/config', { ...aiForm })
+    aiSaved.value = true
+    system.notify('AI 配置已保存', 'success')
+    setTimeout(() => { aiSaved.value = false }, 3000)
+  } catch (e) {
+    system.notify(getActionErrorMessage('保存 AI 配置', e), 'error')
+  } finally {
+    savingAI.value = false
   }
 }
 

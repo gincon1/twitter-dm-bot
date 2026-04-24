@@ -96,28 +96,6 @@ from warming import (
     get_warming_status,
     is_target_warmed,
 )
-from project_manager import (
-    DEFAULT_SEQUENCE_STEP_2_DELAY_DAYS,
-    DEFAULT_SEQUENCE_STEP_3_DELAY_DAYS,
-    PROJECT_STATUS_ARCHIVED,
-    PROJECT_STATUS_COMPLETED,
-    PROJECT_STATUS_PAUSED,
-    PROJECT_STATUS_READY,
-    PROJECT_STATUS_RUNNING,
-    create_project,
-    get_project,
-    get_project_detail,
-    list_projects,
-    get_project_accounts,
-    get_project_targets,
-    pause_project,
-    refresh_project_stats,
-    resume_project,
-    start_project_sending,
-    sync_project_targets_from_segment,
-    upsert_project_accounts,
-    set_project_target_status,
-)
 
 app = FastAPI(title="Twitter DM System")
 
@@ -150,45 +128,6 @@ def _serialize_template(item: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _serialize_project(project_obj: Any) -> Dict[str, Any]:
-    step_1_template_id = str(getattr(project_obj, "sequence_step_1_template_id", "") or getattr(project_obj, "template_id", "") or "")
-    step_2_template_id = str(getattr(project_obj, "sequence_step_2_template_id", "") or getattr(project_obj, "followup_template_id", "") or "")
-    step_3_template_id = str(getattr(project_obj, "sequence_step_3_template_id", "") or getattr(project_obj, "followup_template_id", "") or "")
-    step_2_enabled = bool(getattr(project_obj, "sequence_step_2_enabled", getattr(project_obj, "followup_enabled", True)))
-    step_3_enabled = bool(getattr(project_obj, "sequence_step_3_enabled", getattr(project_obj, "followup_enabled", True)))
-    step_2_delay_days = max(1, int(getattr(project_obj, "sequence_step_2_delay_days", DEFAULT_SEQUENCE_STEP_2_DELAY_DAYS) or DEFAULT_SEQUENCE_STEP_2_DELAY_DAYS))
-    step_3_delay_days = max(1, int(getattr(project_obj, "sequence_step_3_delay_days", DEFAULT_SEQUENCE_STEP_3_DELAY_DAYS) or DEFAULT_SEQUENCE_STEP_3_DELAY_DAYS))
-    return {
-        "id": project_obj.id,
-        "name": project_obj.name,
-        "client_group": project_obj.client_group,
-        "description": project_obj.description,
-        "status": project_obj.status,
-        "segment_id": project_obj.segment_id,
-        "segment_name": project_obj.segment_name,
-        "template_id": project_obj.template_id,
-        "followup_template_id": project_obj.followup_template_id,
-        "sequence_step_1_template_id": step_1_template_id,
-        "sequence_step_2_template_id": step_2_template_id,
-        "sequence_step_3_template_id": step_3_template_id,
-        "sequence_step_2_delay_days": step_2_delay_days,
-        "sequence_step_3_delay_days": step_3_delay_days,
-        "sequence_step_2_enabled": step_2_enabled,
-        "sequence_step_3_enabled": step_3_enabled,
-        "created_at": project_obj.created_at,
-        "updated_at": project_obj.updated_at,
-        "last_run_at": project_obj.last_run_at,
-        "total_targets": project_obj.total_targets,
-        "pending_count": project_obj.pending_count,
-        "sent_count": project_obj.sent_count,
-        "replied_count": project_obj.replied_count,
-        "manual_takeover_count": project_obj.manual_takeover_count,
-        "completed_count": project_obj.completed_count,
-        "warming_enabled": project_obj.warming_enabled,
-        "followup_enabled": project_obj.followup_enabled,
-        "progress": round((project_obj.sent_count + project_obj.replied_count + project_obj.completed_count) / project_obj.total_targets * 100, 1) if project_obj.total_targets > 0 else 0,
-        "reply_rate": round(project_obj.replied_count / project_obj.sent_count * 100, 1) if project_obj.sent_count > 0 else 0,
-    }
 
 INT_CONFIG_KEYS = {
     "daily_dm_limit",
@@ -219,6 +158,7 @@ FEISHU_KEYS = [
     "feishu_app_token",
     "feishu_table_targets",
     "feishu_table_accounts",
+    "feishu_display_name_column",
 ]
 
 
@@ -1283,16 +1223,7 @@ def api_takeover_conversation(conversation_id: str, body: ConversationStatusBody
             "last_reply_preview": (body.note.strip()[:500] if body else "") or conv.get("last_reply_preview", ""),
         },
     )
-    if str(conv.get("project_target_id") or "").strip():
-        set_project_target_status(
-            str(conv.get("project_target_id") or ""),
-            "人工接管",
-            note=(body.note.strip()[:500] if body else "") or "",
-        )
-    else:
-        _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), "人工接管")
-    if str(conv.get("project_id") or "").strip():
-        refresh_project_stats(str(conv.get("project_id") or ""))
+    _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), "人工接管")
     return {"ok": True}
 
 
@@ -1308,16 +1239,7 @@ def api_complete_conversation(conversation_id: str, body: ConversationStatusBody
             "last_reply_preview": (body.note.strip()[:500] if body else "") or conv.get("last_reply_preview", ""),
         },
     )
-    if str(conv.get("project_target_id") or "").strip():
-        set_project_target_status(
-            str(conv.get("project_target_id") or ""),
-            "完成",
-            note=(body.note.strip()[:500] if body else "") or "",
-        )
-    else:
-        _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), "完成")
-    if str(conv.get("project_id") or "").strip():
-        refresh_project_stats(str(conv.get("project_id") or ""))
+    _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), "完成")
     return {"ok": True}
 
 
@@ -1329,13 +1251,80 @@ def api_resume_conversation(conversation_id: str):
     next_status = "replied" if int(conv.get("has_reply", 0) or 0) == 1 else "contacted"
     update_conversation(conversation_id, {"status": next_status})
     target_status = "已回复" if next_status == "replied" else "已发送"
-    if str(conv.get("project_target_id") or "").strip():
-        set_project_target_status(str(conv.get("project_target_id") or ""), target_status)
-        if str(conv.get("project_id") or "").strip():
-            refresh_project_stats(str(conv.get("project_id") or ""))
-    else:
-        _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), target_status)
+    _set_target_status(str(conv.get("target_id") or ""), str(conv.get("target_source") or "local"), target_status)
     return {"ok": True}
+
+
+@app.get("/api/conversations/export")
+def api_export_conversations(
+    search: Optional[str] = Query(None),
+    has_reply: Optional[bool] = Query(None),
+    status: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    format: str = Query("csv", pattern="^(csv|json)$"),
+):
+    conversations = list_conversations(has_reply=has_reply, status=status, search=search, limit=5000)
+    if date_from:
+        conversations = [c for c in conversations if str(c.get("updated_at") or "") >= date_from]
+    if date_to:
+        conversations = [c for c in conversations if str(c.get("updated_at") or "") <= date_to + "Z"]
+
+    if format == "json":
+        return JSONResponse(content={"ok": True, "items": conversations})
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "target_username", "account_username", "status", "has_reply",
+        "last_message_preview", "last_reply_preview", "reply_at",
+        "extracted_email", "extracted_telegram", "extracted_pricing",
+        "reply_analysis", "updated_at",
+    ])
+    for c in conversations:
+        analysis_text = str(c.get("reply_analysis") or "")
+        writer.writerow([
+            c.get("target_username", ""),
+            c.get("account_username", ""),
+            c.get("status", ""),
+            "是" if int(c.get("has_reply", 0) or 0) == 1 else "否",
+            c.get("last_message_preview", ""),
+            c.get("last_reply_preview", ""),
+            c.get("reply_at", ""),
+            c.get("extracted_email", ""),
+            c.get("extracted_telegram", ""),
+            c.get("extracted_pricing", ""),
+            analysis_text[:500] if analysis_text else "",
+            c.get("updated_at", ""),
+        ])
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="conversations_{stamp}.csv"'},
+    )
+
+
+@app.get("/api/conversations/{conversation_id}/detail")
+def api_conversation_detail(conversation_id: str):
+    conv = get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    messages = list_message_events(conversation_id, limit=200, ascending=True)
+    analysis_text = str(conv.get("reply_analysis") or "")
+    import json as _json
+    analysis = {}
+    if analysis_text:
+        try:
+            analysis = _json.loads(analysis_text)
+        except Exception:
+            analysis = {"raw": analysis_text}
+    return {
+        "ok": True,
+        "conversation": conv,
+        "messages": messages,
+        "analysis": analysis,
+    }
 
 
 # ---- Templates ----
@@ -1444,6 +1433,12 @@ def api_get_config():
             db_cfg.get("circuit_breaker_threshold", settings.circuit_breaker_threshold)
         ),
         "feishu_notify_webhook": str(db_cfg.get("feishu_notify_webhook", settings.feishu_notify_webhook)),
+        "feishu_display_name_column": str(
+            db_cfg.get("feishu_display_name_column", settings.feishu_display_name_column)
+        ),
+        "openai_api_key": str(db_cfg.get("openai_api_key", settings.openai_api_key)),
+        "openai_model": str(db_cfg.get("openai_model", settings.openai_model)),
+        "twitter_password": str(db_cfg.get("twitter_password", settings.twitter_password)),
     }
 
 
@@ -1469,6 +1464,10 @@ class ConfigUpdate(BaseModel):
     circuit_breaker_window_min: Optional[int] = None
     circuit_breaker_threshold: Optional[int] = None
     feishu_notify_webhook: Optional[str] = None
+    feishu_display_name_column: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
+    twitter_password: Optional[str] = None
 
 
 @app.post("/api/config")
@@ -1632,147 +1631,6 @@ def api_stats():
             "completed": conversation_counts.get("completed", 0),
         },
     }
-
-
-# ============ 项目管理 API ============
-
-class CreateProjectRequest(BaseModel):
-    name: str
-    client_group: str = ""
-    description: str = ""
-    segment_id: str = ""
-    template_id: str = ""
-    followup_template_id: str = ""
-    sequence_step_1_template_id: str = ""
-    sequence_step_2_template_id: str = ""
-    sequence_step_3_template_id: str = ""
-    sequence_step_2_delay_days: int = DEFAULT_SEQUENCE_STEP_2_DELAY_DAYS
-    sequence_step_3_delay_days: int = DEFAULT_SEQUENCE_STEP_3_DELAY_DAYS
-    sequence_step_2_enabled: bool = True
-    sequence_step_3_enabled: bool = True
-    account_ids: List[str] = Field(default_factory=list)
-    warming_enabled: bool = False
-    followup_enabled: bool = True
-
-
-@app.get("/api/projects")
-def api_list_projects(status: Optional[str] = Query(None)):
-    projects = list_projects(status)
-    items = [_serialize_project(p) for p in projects]
-    return {"ok": True, "items": items, "projects": items}
-
-
-@app.post("/api/projects")
-def api_create_project(req: CreateProjectRequest):
-    project = create_project(
-        name=req.name,
-        client_group=req.client_group,
-        description=req.description,
-        segment_id=req.segment_id,
-        template_id=req.template_id,
-        followup_template_id=req.followup_template_id,
-        sequence_step_1_template_id=req.sequence_step_1_template_id,
-        sequence_step_2_template_id=req.sequence_step_2_template_id,
-        sequence_step_3_template_id=req.sequence_step_3_template_id,
-        sequence_step_2_delay_days=req.sequence_step_2_delay_days,
-        sequence_step_3_delay_days=req.sequence_step_3_delay_days,
-        sequence_step_2_enabled=req.sequence_step_2_enabled,
-        sequence_step_3_enabled=req.sequence_step_3_enabled,
-        account_ids=req.account_ids,
-        warming_enabled=req.warming_enabled,
-        followup_enabled=req.followup_enabled,
-    )
-    refresh_project_stats(project.id)
-    created = get_project(project.id) or project
-    return {"ok": True, "project": _serialize_project(created)}
-
-
-@app.get("/api/projects/{project_id}")
-def api_get_project(project_id: str):
-    detail = get_project_detail(project_id)
-    if not detail:
-        raise HTTPException(status_code=404, detail="项目不存在")
-
-    project = detail["project"]
-    project_obj = project if hasattr(project, "id") else None
-    if not project_obj:
-        raise HTTPException(status_code=404, detail="项目不存在")
-
-    account_links = detail.get("accounts") or []
-    all_accounts = _load_all_accounts()
-    account_map = {str(acc.get("record_id") or ""): acc for acc in all_accounts}
-    accounts = []
-    for link in account_links:
-        merged = dict(link)
-        merged.update(account_map.get(str(link.get("account_id") or ""), {}))
-        merged["account_id"] = str(link.get("account_id") or "")
-        accounts.append(merged)
-
-    targets = detail.get("targets") or []
-    return {
-        "ok": True,
-        "project": _serialize_project(project_obj),
-        "accounts": accounts,
-        "targets": targets,
-        "stats": {
-            "progress": round((project_obj.sent_count + project_obj.replied_count + project_obj.completed_count) / project_obj.total_targets * 100, 1) if project_obj.total_targets > 0 else 0,
-            "reply_rate": round(project_obj.replied_count / project_obj.sent_count * 100, 1) if project_obj.sent_count > 0 else 0,
-            "pending_count": project_obj.pending_count,
-            "sent_count": project_obj.sent_count,
-            "replied_count": project_obj.replied_count,
-            "manual_takeover_count": project_obj.manual_takeover_count,
-            "completed_count": project_obj.completed_count,
-        }
-    }
-
-
-@app.post("/api/projects/{project_id}/start")
-def api_start_project(project_id: str):
-    """启动项目发送"""
-    result = start_project_sending(project_id)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    return result
-
-
-@app.post("/api/projects/{project_id}/pause")
-def api_pause_project(project_id: str):
-    project = pause_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    return {"ok": True, "message": "项目已暂停", "status": project.status}
-
-
-@app.post("/api/projects/{project_id}/resume")
-def api_resume_project(project_id: str):
-    result = start_project_sending(project_id)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "项目恢复失败")
-    return result
-
-
-@app.post("/api/projects/{project_id}/targets")
-def api_sync_project_targets(project_id: str):
-    project = get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    inserted = sync_project_targets_from_segment(project_id)
-    refresh_project_stats(project_id)
-    return {"ok": True, "inserted": inserted, "message": "项目目标已同步"}
-
-
-class ProjectAccountsBody(BaseModel):
-    account_ids: List[str] = Field(default_factory=list)
-
-
-@app.post("/api/projects/{project_id}/accounts")
-def api_update_project_accounts(project_id: str, body: ProjectAccountsBody):
-    project = get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    count = upsert_project_accounts(project_id, body.account_ids)
-    refresh_project_stats(project_id)
-    return {"ok": True, "count": count, "message": "项目账号已更新"}
 
 
 if __name__ == "__main__":

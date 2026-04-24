@@ -91,18 +91,20 @@ def _template_content_by_id(template_id: str, template_type: str = TEMPLATE_TYPE
     return None
 
 
-def generate(project: str, template_type: str = TEMPLATE_TYPE_STEP_1, handle: str = "", template_id: str = "") -> str:
+def generate(project: str, template_type: str = TEMPLATE_TYPE_STEP_1, handle: str = "", template_id: str = "", nickname: str = "") -> str:
     hook = random.choice(HOOKS)
     template = _template_content_by_id(template_id, template_type=template_type)
     if not template:
         template = random.choice(_active_template_pool(template_type=template_type))
+    name_value = nickname if nickname else random.choice(NAMES)
     msg = template.format_map(
         _SafeFormatDict(
-            name=random.choice(NAMES),
+            name=name_value,
             project=(project or "your project"),
             hook=hook,
             personalized_hook=hook,
             handle=handle,
+            nickname=nickname,
         )
     ).strip()
     return " ".join(msg.split())

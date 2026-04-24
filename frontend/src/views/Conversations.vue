@@ -1,239 +1,120 @@
 <template>
-  <section class="conversations-page">
-    <div class="conversation-hero card">
-      <div class="conversation-hero-copy">
-        <div class="conversation-kicker">Conversation Hub</div>
-        <h2>会话管理</h2>
+  <section class="conv-page">
+    <div class="conv-header">
+      <div>
+        <h2>对话</h2>
+        <p>查看谁回复了你，AI 帮你提取关键信息</p>
       </div>
-      <div class="conversation-hero-actions">
+      <div class="conv-actions">
         <button class="btn btn-ghost" @click="load">刷新</button>
-        <button class="btn btn-secondary" @click="triggerCheck">普通同步</button>
-        <button class="btn btn-secondary" @click="triggerCheckFull">全部同步</button>
-        <button class="btn btn-secondary" :disabled="!canRunFollowups" @click="triggerFollowups">
-          {{ followupSubmitting ? '执行中...' : '执行续跟任务' }}
-        </button>
+        <button class="btn btn-secondary" @click="syncReplies">同步回复</button>
+        <button class="btn btn-secondary" @click="exportCSV">导出</button>
       </div>
     </div>
 
-    <div class="card conversation-filters-panel">
-      <div class="conversation-panel-head">
-        <div>
-          <div class="section-title">筛选条件</div>
+    <!-- Stats -->
+    <div class="conv-stats">
+      <div class="stat-chip"><span class="stat-label">总对话</span><strong>{{ stats.total }}</strong></div>
+      <div class="stat-chip"><span class="stat-label">已联系</span><strong class="blue">{{ stats.contacted }}</strong></div>
+      <div class="stat-chip"><span class="stat-label">已回复</span><strong class="green">{{ stats.replied }}</strong></div>
+      <div class="stat-chip"><span class="stat-label">我来处理</span><strong class="amber">{{ stats.manual }}</strong></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="conv-filters">
+      <input v-model="search" class="input" placeholder="搜索用户名..." @input="debounceLoad" />
+      <div class="filter-tabs">
+        <button class="filter-tab" :class="{ active: filter === '' }" @click="filter = ''; load()">全部</button>
+        <button class="filter-tab" :class="{ active: filter === 'replied' }" @click="filter = 'replied'; load()">已回复</button>
+        <button class="filter-tab" :class="{ active: filter === 'contacted' }" @click="filter = 'contacted'; load()">未回复</button>
+        <button class="filter-tab" :class="{ active: filter === 'manual_takeover' }" @click="filter = 'manual_takeover'; load()">我来处理</button>
+      </div>
+    </div>
+
+    <!-- List + Detail -->
+    <div class="conv-main">
+      <!-- Left: list -->
+      <div class="conv-list">
+        <div v-for="item in conversations" :key="item.id"
+          class="conv-item" :class="{ selected: selected?.id === item.id }"
+          @click="selectConv(item)">
+          <div class="conv-item-top">
+            <strong>@{{ item.target_username }}</strong>
+            <span class="conv-time">{{ shortTime(item.updated_at) }}</span>
+          </div>
+          <div class="conv-item-msg">{{ item.last_message_preview || '无消息' }}</div>
+          <div class="conv-item-tags">
+            <span :class="statusClass(item)">{{ statusText(item) }}</span>
+            <span v-if="item.extracted_email" class="tag-sm tag-blue">邮箱</span>
+            <span v-if="item.extracted_telegram" class="tag-sm tag-blue">TG</span>
+            <span v-if="item.extracted_pricing" class="tag-sm tag-amber">报价</span>
+          </div>
         </div>
+        <div v-if="!conversations.length" class="empty-text">暂无对话</div>
       </div>
 
-      <div class="conversation-filters-grid">
-        <select v-model="clientGroupFilter" class="input" @change="load">
-          <option value="">全部归属</option>
-          <option v-for="g in clientGroups" :key="g" :value="g">{{ g }}</option>
-        </select>
-        <select v-model="replyFilter" class="input" @change="load">
-          <option value="">全部会话</option>
-          <option value="1">仅已回复</option>
-          <option value="0">仅待回复</option>
-        </select>
-        <select v-model="statusFilter" class="input" @change="load">
-          <option value="">全部状态</option>
-          <option value="contacted">已触达</option>
-          <option value="replied">已回复</option>
-          <option value="manual_takeover">人工处理</option>
-          <option value="completed">已完成</option>
-        </select>
-        <input v-model="search" class="input" placeholder="搜索用户名 / 账号 / 包名 / 归属" @keyup.enter="load" />
-      </div>
-    </div>
-
-    <div class="conversation-summary-grid">
-      <div class="metric-card conversation-summary-card">
-        <span>总会话数</span>
-        <strong>{{ summary.total }}</strong>
-      </div>
-      <div class="metric-card conversation-summary-card">
-        <span>已触达</span>
-        <strong class="blue">{{ summary.contacted }}</strong>
-      </div>
-      <div class="metric-card conversation-summary-card">
-        <span>已回复</span>
-        <strong class="green">{{ summary.replied }}</strong>
-      </div>
-      <div class="metric-card conversation-summary-card">
-        <span>人工处理</span>
-        <strong class="amber">{{ summary.manual_takeover }}</strong>
-      </div>
-      <div class="metric-card conversation-summary-card">
-        <span>待处理回复</span>
-        <strong class="amber">{{ pendingReplies.length }}</strong>
-      </div>
-    </div>
-
-    <div class="card conversation-pending-panel">
-      <div class="conversation-panel-head">
-        <div>
-          <div class="section-title">待处理回复</div>
-        </div>
-        <span class="pill">{{ pendingReplies.length }} 条</span>
-      </div>
-
-      <div v-if="pendingReplies.length" class="pending-reply-grid">
-        <article v-for="item in pendingReplies" :key="item.id" class="pending-reply-card">
-          <div class="pending-reply-head">
-            <strong>@{{ item.target_username || '-' }}</strong>
-            <span>{{ formatTime(item.reply_at) }}</span>
-          </div>
-          <div class="pending-reply-meta">
-            <span>{{ item.client_group || '未归属' }}</span>
-            <span>{{ item.segment_name || '未分组' }}</span>
-            <span>{{ item.account_username || item.account_profile_id || '-' }}</span>
-          </div>
-          <div class="pending-reply-preview">{{ item.last_reply_preview || item.last_message_preview || '-' }}</div>
-          <div class="conversation-row-actions">
-            <button class="btn btn-ghost btn-sm" @click="openMessages(item)">消息记录</button>
-            <button class="btn btn-ghost btn-sm" @click="takeover(item)">转人工处理</button>
-            <button class="btn btn-secondary btn-sm" @click="complete(item)">完成</button>
-          </div>
-        </article>
-      </div>
-      <div v-else class="dashboard-empty">暂无待处理回复</div>
-    </div>
-
-    <div v-if="clientGroupStats.length" class="card conversation-group-panel">
-      <div class="conversation-panel-head">
-        <div>
-          <div class="section-title">各归属会话概览</div>
-        </div>
-      </div>
-
-      <div class="group-grid">
-        <button
-          v-for="g in clientGroupStats"
-          :key="g.client_group"
-          class="group-card"
-          :class="clientGroupFilter === g.client_group ? 'group-card-active' : ''"
-          @click="toggleClientGroupFilter(g.client_group)"
-        >
-          <div class="group-card-head">
-            <strong>{{ g.client_group }}</strong>
-            <span v-if="clientGroupFilter === g.client_group">筛选中</span>
-          </div>
-          <div class="group-card-meta">
-            <span>共 {{ g.total }}</span>
-            <span class="green">回复 {{ g.replied }} ({{ replyRate(g) }})</span>
-            <span v-if="g.manual_takeover" class="amber">人工处理 {{ g.manual_takeover }}</span>
-          </div>
-        </button>
-      </div>
-    </div>
-
-    <div class="card conversation-table-panel">
-      <div class="conversation-panel-head">
-        <div>
-          <div class="section-title">会话列表</div>
-        </div>
-        <span class="pill">当前 {{ conversations.length }} 条</span>
-      </div>
-
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>目标</th>
-              <th>项目</th>
-              <th>目标分组</th>
-              <th>归属</th>
-              <th>发送账号</th>
-              <th>状态</th>
-              <th>最后触达</th>
-              <th>已发条数</th>
-              <th>回复时间</th>
-              <th>最新预览</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in conversations" :key="item.id">
-              <td style="color: var(--text-1)">@{{ item.target_username || '-' }}</td>
-              <td>
-                <div style="color: var(--text-1)">{{ item.project_name || '-' }}</div>
-                <div v-if="item.project_id" class="text-xs font-mono" style="color: var(--text-4)">{{ item.project_id }}</div>
-              </td>
-              <td>
-                <span v-if="item.segment_name || item.segment_id" class="segment-chip">
-                  {{ item.segment_name || item.segment_id }}
-                </span>
-                <span v-else class="text-xs" style="color: var(--text-4)">-</span>
-              </td>
-              <td>
-                <div style="color: var(--text-1)">{{ item.client_group || '-' }}</div>
-                <div v-if="item.client_note" class="text-xs" style="color: var(--text-4)">{{ item.client_note }}</div>
-              </td>
-              <td>
-                <div style="color: var(--text-1)">{{ item.account_username || '-' }}</div>
-                <div class="text-xs font-mono" style="color: var(--text-4)">{{ item.account_profile_id || '-' }}</div>
-              </td>
-              <td>
-                <span class="status-chip" :style="statusStyle(item)">
-                  {{ statusLabel(item) }}
-                </span>
-              </td>
-              <td style="color: var(--text-2)">{{ formatTime(item.last_contact_time) }}</td>
-              <td style="color: var(--text-2)">{{ item.contact_count || 0 }}</td>
-              <td style="color: var(--text-2)">{{ formatTime(item.reply_at) }}</td>
-              <td class="max-w-[320px] truncate" :title="item.last_reply_preview || item.last_message_preview" style="color: var(--text-2)">
-                {{ item.last_reply_preview || item.last_message_preview || '-' }}
-              </td>
-              <td>
-                <div class="conversation-row-actions">
-                  <button class="btn btn-ghost btn-sm" @click="openMessages(item)">消息记录</button>
-                  <button v-if="item.status !== 'manual_takeover'" class="btn btn-ghost btn-sm" @click="takeover(item)">转人工处理</button>
-                  <button v-if="item.status !== 'completed'" class="btn btn-secondary btn-sm" @click="complete(item)">完成</button>
-                  <button v-if="item.status === 'manual_takeover' || item.status === 'completed'" class="btn btn-ghost btn-sm" @click="resumeAuto(item)">恢复自动流程</button>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="!conversations.length">
-              <td colspan="11" class="py-8 text-center" style="color: var(--text-3)">暂无会话记录</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div v-if="messageDialog.open" class="modal-backdrop" @click.self="closeMessages">
-      <div class="modal-box conversation-modal">
-        <div class="conversation-panel-head">
-          <div>
-            <div class="conversation-kicker">Message Detail</div>
-            <h3 class="conversation-modal-title">@{{ messageDialog.conversation?.target_username || '-' }}</h3>
-            <div class="conversation-modal-meta">
-              <span v-if="messageDialog.conversation?.segment_name">{{ messageDialog.conversation.segment_name }}</span>
-              <span v-if="messageDialog.conversation?.project_name">{{ messageDialog.conversation.project_name }}</span>
-              <span>{{ messageDialog.conversation?.client_group || '-' }}</span>
-              <span>{{ messageDialog.conversation?.account_profile_id || '-' }}</span>
-              <span>{{ messageDialog.messages.length }} 条消息</span>
+      <!-- Right: detail -->
+      <div class="conv-detail">
+        <div v-if="!selected" class="conv-empty">点击左侧对话查看详情</div>
+        <template v-else>
+          <div class="detail-head">
+            <div>
+              <h3>@{{ selected.target_username }}</h3>
+              <span :class="statusClass(selected)">{{ statusText(selected) }}</span>
+            </div>
+            <div class="detail-actions">
+              <button class="btn btn-sm btn-ghost" @click="markTakeover">我来处理</button>
+              <button class="btn btn-sm btn-ghost" @click="markDone">搞定了</button>
             </div>
           </div>
-          <button class="btn btn-ghost" @click="closeMessages">关闭</button>
-        </div>
 
-        <div class="conversation-modal-body">
-          <div v-if="messageDialog.loading" class="dashboard-empty">正在加载消息...</div>
-          <div v-else-if="!messageDialog.messages.length" class="dashboard-empty">暂无消息记录</div>
-          <div v-else class="message-list">
-            <div
-              v-for="message in messageDialog.messages"
-              :key="message.id"
-              class="message-row"
-              :class="message.direction === 'outbound' ? 'outbound' : 'inbound'"
-            >
-              <div class="message-bubble" :style="messageBubbleStyle(message)">
-                <div class="message-content">{{ message.content || '-' }}</div>
-                <div class="message-meta">
-                  {{ message.direction === 'outbound' ? '我方发送' : '对方回复' }} · {{ formatTime(message.detected_at || message.created_at) }}
-                </div>
+          <!-- AI Analysis -->
+          <div v-if="hasAnalysis" class="ai-box">
+            <div class="ai-title">AI 分析</div>
+            <div class="ai-fields">
+              <div class="ai-field">
+                <span class="ai-label">邮箱</span>
+                <span class="ai-val">{{ selected.extracted_email || analysis?.email || '-' }}</span>
+              </div>
+              <div class="ai-field">
+                <span class="ai-label">Telegram</span>
+                <span class="ai-val">{{ selected.extracted_telegram || analysis?.telegram || '-' }}</span>
+              </div>
+              <div class="ai-field">
+                <span class="ai-label">报价</span>
+                <span class="ai-val">{{ selected.extracted_pricing || analysis?.pricing || '-' }}</span>
+              </div>
+              <div class="ai-field">
+                <span class="ai-label">意向</span>
+                <span :class="intentStyle">{{ intentText }}</span>
               </div>
             </div>
+            <div v-if="analysis?.summary" class="ai-summary">{{ analysis.summary }}</div>
           </div>
-        </div>
+
+          <!-- Messages -->
+          <div class="msg-section">
+            <div v-if="selected.last_reply_preview" class="msg-row reply">
+              <span class="msg-dir">对方回复</span>
+              <p>{{ selected.last_reply_preview }}</p>
+              <span class="msg-time">{{ fmtTime(selected.reply_at) }}</span>
+            </div>
+            <div v-if="selected.last_message_preview" class="msg-row sent">
+              <span class="msg-dir">我发的</span>
+              <p>{{ selected.last_message_preview }}</p>
+            </div>
+          </div>
+
+          <!-- Full history -->
+          <div v-if="messages.length" class="msg-history">
+            <div class="history-label">完整对话</div>
+            <div v-for="msg in messages" :key="msg.id" class="msg-row" :class="msg.direction === 'inbound' ? 'reply' : 'sent'">
+              <span class="msg-dir">{{ msg.direction === 'inbound' ? '对方' : '我方' }}</span>
+              <p>{{ msg.content }}</p>
+              <span class="msg-time">{{ fmtTime(msg.detected_at) }}</span>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
   </section>
@@ -242,547 +123,228 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
-import api from '../api'
-import { useSystemStore } from '../stores/system'
-import { getActionErrorMessage } from '../utils/errorText'
-
-const system = useSystemStore()
 const conversations = ref([])
-const clientGroups = ref([])
-const clientGroupStats = ref([])
-const pendingReplies = ref([])
-const summary = ref({ total: 0, contacted: 0, replied: 0, manual_takeover: 0, completed: 0, replied_today: 0 })
-const replyFilter = ref('')
-const statusFilter = ref('')
-const clientGroupFilter = ref('')
+const selected = ref(null)
+const messages = ref([])
+const analysis = ref(null)
+const stats = ref({ total: 0, contacted: 0, replied: 0, manual: 0 })
 const search = ref('')
-const messageDialog = ref({
-  open: false,
-  loading: false,
-  conversation: null,
-  messages: []
-})
-const followupSubmitting = ref(false)
+const filter = ref('')
+let debounceTimer = null
 
-const repliedStyle = { background: 'rgba(98,217,155,0.12)', color: '#62d99b', border: '1px solid rgba(98,217,155,0.18)' }
-const pendingStyle = { background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.18)' }
-const takeoverStyle = { background: 'rgba(245,158,11,0.14)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.18)' }
-const completedStyle = { background: 'rgba(192,132,252,0.14)', color: '#c084fc', border: '1px solid rgba(192,132,252,0.18)' }
-const outboundBubbleStyle = { background: 'rgba(119,183,255,0.08)', border: '1px solid rgba(119,183,255,0.12)' }
-const inboundBubbleStyle = { background: 'rgba(98,217,155,0.08)', border: '1px solid rgba(98,217,155,0.12)' }
-
-const replyRate = (g) => {
-  if (!g.total) return '0%'
-  return Math.round((g.replied / g.total) * 100) + '%'
-}
-
-const toggleClientGroupFilter = (group) => {
-  clientGroupFilter.value = clientGroupFilter.value === group ? '' : group
-  load()
-}
-
-const formatTime = (value) => {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleString()
-}
-
-const statusLabel = (item) => {
-  if (item.status === 'manual_takeover') return '人工处理'
-  if (item.status === 'completed') return '已完成'
+function statusText(item) {
+  if (item.status === 'manual_takeover') return '我来处理'
+  if (item.status === 'completed') return '已结束'
   if (item.has_reply || item.status === 'replied') return '已回复'
-  return '已触达'
+  return '已联系'
 }
 
-const statusStyle = (item) => {
-  if (item.status === 'manual_takeover') return takeoverStyle
-  if (item.status === 'completed') return completedStyle
-  if (item.has_reply || item.status === 'replied') return repliedStyle
-  return pendingStyle
+function statusClass(item) {
+  const s = item.status
+  if (s === 'manual_takeover') return 'status-tag tag-amber'
+  if (s === 'completed') return 'status-tag tag-gray'
+  if (item.has_reply || s === 'replied') return 'status-tag tag-green'
+  return 'status-tag tag-blue'
 }
 
-const messageBubbleStyle = (message) => (message.direction === 'outbound' ? outboundBubbleStyle : inboundBubbleStyle)
-const canRunFollowups = computed(() => system.pageRunning && !followupSubmitting.value)
+const hasAnalysis = computed(() =>
+  analysis.value || selected.value?.extracted_email || selected.value?.extracted_telegram || selected.value?.extracted_pricing
+)
 
-const load = async () => {
-  try {
-    const params = { limit: 500 }
-    if (replyFilter.value !== '') params.has_reply = replyFilter.value === '1'
-    if (statusFilter.value) params.status = statusFilter.value
-    if (clientGroupFilter.value) params.client_group = clientGroupFilter.value
-    if (search.value.trim()) params.search = search.value.trim()
-
-    const [convResp, statsResp, cgStatsResp] = await Promise.all([
-      api.get('/conversations', { params }),
-      api.get('/stats'),
-      api.get('/conversations/by-client-group'),
-    ])
-    conversations.value = convResp.data || []
-    summary.value = statsResp.data?.conversations || { total: 0, contacted: 0, replied: 0, manual_takeover: 0, completed: 0, replied_today: 0 }
-    pendingReplies.value = statsResp.data?.pending_replies || []
-    clientGroupStats.value = cgStatsResp.data || []
-    clientGroups.value = clientGroupStats.value.map((g) => g.client_group).filter(Boolean)
-  } catch (e) {
-    system.notify(getActionErrorMessage('加载会话', e), 'error')
-  }
-}
-
-const triggerCheck = async () => {
-  try {
-    await system.checkReplies()
-    setTimeout(load, 1200)
-  } catch (e) {
-    system.notify(getActionErrorMessage('触发普通同步', e), 'error')
-  }
-}
-
-const triggerCheckFull = async () => {
-  try {
-    await system.checkRepliesFull()
-    setTimeout(load, 1200)
-  } catch (e) {
-    system.notify(getActionErrorMessage('触发全部同步', e), 'error')
-  }
-}
-
-const triggerFollowups = async () => {
-  if (!system.pageRunning) {
-    system.notify('系统未启动或已暂停，无法执行续跟任务', 'warn')
-    return
-  }
-  try {
-    followupSubmitting.value = true
-    const preview = await system.previewFollowups()
-    const ready = Number(preview.ready_count || 0)
-    const total = Number(preview.total_candidates || 0)
-    if (!ready) {
-      system.notify(preview.message || '暂无满足条件的续跟对象', 'info')
-      return
-    }
-    const confirmed = window.confirm(`本次预计执行 ${ready} 条续跟任务（候选 ${total} 条）。是否继续？`)
-    if (!confirmed) {
-      return
-    }
-    const trigger = await system.runFollowups()
-    const runId = Number(trigger.run_id || 0)
-    system.notify('续跟任务已提交，正在执行', 'info')
-    for (let i = 0; i < 120; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-      const status = await system.getFollowupRunStatus()
-      if (Number(status.run_id || 0) !== runId) continue
-      if (status.running) continue
-      const summary = status.summary || {}
-      system.notify(summary.message || `续跟完成：发送 ${summary.sent || 0} 条`, 'success')
-      await load()
-      return
-    }
-    system.notify('续跟任务仍在执行，可在实时日志查看进度', 'info')
-  } catch (e) {
-    system.notify(formatFollowupSubmitError(e), 'error')
-  } finally {
-    followupSubmitting.value = false
-  }
-}
-
-const formatFollowupSubmitError = (error) => {
-  return getActionErrorMessage('提交续跟任务', error, '续跟任务提交未完成，请稍后重试')
-}
-
-const openMessages = async (item) => {
-  messageDialog.value = { open: true, loading: true, conversation: item, messages: [] }
-  try {
-    const { data } = await api.get(`/conversations/${item.id}/messages`)
-    messageDialog.value = {
-      open: true,
-      loading: false,
-      conversation: data?.conversation || item,
-      messages: data?.messages || []
-    }
-  } catch (e) {
-    messageDialog.value.loading = false
-    system.notify(getActionErrorMessage('加载消息记录', e), 'error')
-  }
-}
-
-const closeMessages = () => {
-  messageDialog.value = { open: false, loading: false, conversation: null, messages: [] }
-}
-
-const takeover = async (item) => {
-  try {
-    const note = window.prompt('可选备注：例如"已进入报价阶段"', '') || ''
-    await api.post(`/conversations/${item.id}/takeover`, { note })
-    system.notify('已转入人工处理', 'success')
-    await load()
-  } catch (e) {
-    system.notify(getActionErrorMessage('转人工处理', e), 'error')
-  }
-}
-
-const complete = async (item) => {
-  try {
-    const note = window.prompt('可选备注：例如"合作已确认"', '') || ''
-    await api.post(`/conversations/${item.id}/complete`, { note })
-    system.notify('会话已标记完成', 'success')
-    await load()
-  } catch (e) {
-    system.notify(getActionErrorMessage('标记完成', e), 'error')
-  }
-}
-
-const resumeAuto = async (item) => {
-  try {
-    await api.post(`/conversations/${item.id}/resume-auto`)
-    system.notify('该会话已恢复自动流程', 'success')
-    await load()
-  } catch (e) {
-    system.notify(getActionErrorMessage('恢复自动流程', e), 'error')
-  }
-}
-
-onMounted(() => {
-  load()
+const intentText = computed(() => {
+  const i = analysis.value?.intent
+  const m = { interested: '感兴趣', not_interested: '不感兴趣', pending: '待定' }
+  return m[i] || '待分析'
 })
+
+const intentStyle = computed(() => {
+  const i = analysis.value?.intent
+  const m = { interested: 'ai-val green', not_interested: 'ai-val red', pending: 'ai-val amber' }
+  return m[i] || 'ai-val'
+})
+
+function shortTime(v) {
+  if (!v) return ''
+  const d = new Date(v)
+  if (isNaN(d.getTime())) return v
+  const now = new Date()
+  const diffMs = now - d
+  if (diffMs < 60000) return '刚刚'
+  if (diffMs < 3600000) return Math.floor(diffMs / 60000) + ' 分钟前'
+  if (diffMs < 86400000) return Math.floor(diffMs / 3600000) + ' 小时前'
+  return (d.getMonth() + 1) + '/' + d.getDate()
+}
+
+function fmtTime(v) {
+  if (!v) return ''
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? v : d.toLocaleString()
+}
+
+function debounceLoad() {
+  clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(load, 300)
+}
+
+async function load() {
+  try {
+    const params = new URLSearchParams()
+    if (filter.value) params.set('status', filter.value)
+    if (search.value) params.set('search', search.value)
+    params.set('limit', '500')
+    const res = await fetch('/api/conversations?' + params)
+    conversations.value = await res.json()
+  } catch {}
+  await loadStats()
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats')
+    const data = await res.json()
+    const c = data.conversations || {}
+    stats.value = {
+      total: c.total || 0,
+      contacted: c.contacted || 0,
+      replied: c.replied || 0,
+      manual: c.manual_takeover || 0,
+    }
+  } catch {}
+}
+
+async function selectConv(item) {
+  selected.value = item
+  analysis.value = null
+  messages.value = []
+  try {
+    const res = await fetch(`/api/conversations/${item.id}/detail`)
+    const data = await res.json()
+    messages.value = data.messages || []
+    analysis.value = data.analysis || null
+  } catch {}
+}
+
+async function markTakeover() {
+  if (!selected.value) return
+  await fetch(`/api/conversations/${selected.value.id}/takeover`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+  await load()
+  if (selected.value) await selectConv(selected.value)
+}
+
+async function markDone() {
+  if (!selected.value) return
+  await fetch(`/api/conversations/${selected.value.id}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+  await load()
+  if (selected.value) await selectConv(selected.value)
+}
+
+async function syncReplies() {
+  await fetch('/api/check-replies', { method: 'POST' })
+  alert('同步已触发')
+  await load()
+}
+
+async function exportCSV() {
+  window.open('/api/conversations/export?format=csv', '_blank')
+}
+
+onMounted(load)
 </script>
 
 <style scoped>
-.conversations-page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
+.conv-page { display: flex; flex-direction: column; gap: 18px; }
+.conv-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.conv-header h2 { font-size: 28px; font-weight: 800; letter-spacing: -0.04em; }
+.conv-header p { color: var(--text-3); margin-top: 4px; font-size: 14px; }
+.conv-actions { display: flex; gap: 8px; }
 
-.conversation-hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 22px;
+/* Stats */
+.conv-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat-chip {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 12px 20px; border-radius: 18px; min-width: 100px;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.025);
 }
+.stat-label { font-size: 11px; color: var(--text-4); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.stat-chip strong { font-size: 24px; font-weight: 800; margin-top: 4px; }
+.blue { color: #60a5fa; }
+.green { color: #4ade80; }
+.amber { color: #f59e0b; }
+.red { color: #f87171; }
 
-.conversation-kicker {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-4);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+/* Filters */
+.conv-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.filter-tabs { display: flex; gap: 4px; }
+.filter-tab {
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-3); font-size: 13px; cursor: pointer;
 }
+.filter-tab:hover { color: var(--text-1); }
+.filter-tab.active { background: rgba(74,222,128,0.12); color: #4ade80; border-color: rgba(74,222,128,0.3); }
 
-.conversation-hero-copy h2 {
-  margin-top: 10px;
-  font-size: clamp(34px, 5vw, 52px);
-  line-height: 0.98;
-  font-weight: 800;
-  letter-spacing: -0.06em;
-  color: var(--text-1);
+/* Main layout */
+.conv-main { display: grid; grid-template-columns: 360px 1fr; gap: 18px; min-height: 480px; }
+.conv-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 70vh; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 20px; padding: 10px;
 }
-
-.conversation-hero-copy p {
-  margin-top: 14px;
-  max-width: 620px;
-  color: var(--text-3);
-  font-size: 14px;
-  line-height: 1.75;
+.conv-item {
+  padding: 12px 14px; border-radius: 14px; border: 1px solid transparent;
+  cursor: pointer; transition: all 0.15s;
 }
+.conv-item:hover { background: rgba(255,255,255,0.03); border-color: var(--border); }
+.conv-item.selected { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.2); }
+.conv-item-top { display: flex; justify-content: space-between; align-items: center; }
+.conv-item-top strong { font-size: 14px; }
+.conv-time { font-size: 11px; color: var(--text-4); }
+.conv-item-msg { margin-top: 4px; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-item-tags { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 
-.conversation-hero-actions,
-.conversation-row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+/* Tags */
+.status-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.tag-sm { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.tag-blue { background: rgba(96,165,250,0.15); color: #60a5fa; }
+.tag-green { background: rgba(74,222,128,0.15); color: #4ade80; }
+.tag-amber { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.tag-gray { background: rgba(148,163,184,0.15); color: #94a3b8; }
+.tag-red { background: rgba(248,113,113,0.15); color: #f87171; }
+
+/* Detail */
+.conv-detail { border: 1px solid var(--border); border-radius: 20px; padding: 20px; background: rgba(255,255,255,0.015); }
+.conv-empty { display: grid; place-items: center; height: 300px; color: var(--text-4); }
+.detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.detail-head h3 { font-size: 20px; font-weight: 800; display: inline; margin-right: 8px; }
+.detail-actions { display: flex; gap: 6px; }
+.btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 12px; }
+
+/* AI Box */
+.ai-box {
+  border: 1px solid rgba(96,165,250,0.2); border-radius: 16px;
+  padding: 14px; margin-bottom: 16px; background: rgba(96,165,250,0.04);
 }
+.ai-title { font-size: 11px; font-weight: 700; color: #60a5fa; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+.ai-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.ai-field { display: flex; flex-direction: column; gap: 2px; }
+.ai-label { font-size: 11px; color: var(--text-4); font-weight: 600; }
+.ai-val { font-size: 13px; font-weight: 700; color: var(--text-1); word-break: break-all; }
+.ai-summary { margin-top: 10px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
 
-.conversation-filters-panel,
-.conversation-pending-panel,
-.conversation-group-panel,
-.conversation-table-panel {
-  padding: 18px;
+/* Messages */
+.msg-section { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.msg-row {
+  padding: 10px 14px; border-radius: 14px; max-width: 85%;
 }
+.msg-row.reply { background: rgba(74,222,128,0.06); border: 1px solid rgba(74,222,128,0.12); align-self: flex-start; }
+.msg-row.sent { background: rgba(255,255,255,0.03); border: 1px solid var(--border); align-self: flex-end; }
+.msg-dir { display: block; font-size: 10px; font-weight: 700; color: var(--text-4); margin-bottom: 4px; }
+.msg-row p { font-size: 13px; color: var(--text-1); line-height: 1.5; margin: 0; }
+.msg-time { display: block; margin-top: 4px; font-size: 10px; color: var(--text-4); }
+.empty-text { color: var(--text-4); text-align: center; padding: 24px; font-size: 13px; }
 
-.conversation-panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
+/* Full history */
+.msg-history { border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.history-label { font-size: 11px; font-weight: 700; color: var(--text-4); margin-bottom: 8px; text-transform: uppercase; }
 
-.conversation-filters-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.conversation-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.conversation-summary-card {
-  min-height: 132px;
-  padding: 16px;
-}
-
-.conversation-summary-card span {
-  color: var(--text-4);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.conversation-summary-card strong {
-  display: block;
-  margin-top: 16px;
-  color: var(--text-1);
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-}
-
-.conversation-summary-card strong.blue {
-  color: #77b7ff;
-}
-
-.conversation-summary-card strong.green {
-  color: var(--accent);
-}
-
-.conversation-summary-card strong.amber {
-  color: #f59e0b;
-}
-
-.pending-reply-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.pending-reply-card {
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 16px;
-  background: rgba(98, 217, 155, 0.05);
-}
-
-.pending-reply-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.pending-reply-head strong {
-  color: var(--text-1);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.pending-reply-head span {
-  color: var(--text-4);
-  font-size: 11px;
-}
-
-.pending-reply-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-  color: var(--text-4);
-  font-size: 11px;
-}
-
-.pending-reply-meta span {
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.pending-reply-preview {
-  margin-top: 12px;
-  color: var(--text-2);
-  font-size: 13px;
-  line-height: 1.7;
-  min-height: 44px;
-}
-
-.group-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.group-card {
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.025);
-  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
-}
-
-.group-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(98, 217, 155, 0.16);
-}
-
-.group-card-active {
-  border-color: rgba(98, 217, 155, 0.18);
-  background: rgba(98, 217, 155, 0.08);
-}
-
-.group-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.group-card-head strong {
-  color: var(--text-1);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.group-card-head span {
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.group-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-top: 12px;
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.group-card-meta .green {
-  color: var(--accent);
-}
-
-.group-card-meta .amber {
-  color: #f59e0b;
-}
-
-.conversation-table-panel .conversation-panel-head {
-  margin-bottom: 16px;
-}
-
-.segment-chip,
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.segment-chip {
-  background: rgba(119, 183, 255, 0.12);
-  color: #77b7ff;
-}
-
-.conversation-modal {
-  max-width: min(980px, calc(100vw - 36px));
-}
-
-.conversation-modal-title {
-  margin-top: 10px;
-  color: var(--text-1);
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-}
-
-.conversation-modal-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-top: 12px;
-  color: var(--text-4);
-  font-size: 12px;
-}
-
-.conversation-modal-body {
-  margin-top: 18px;
-  max-height: 68vh;
-  overflow-y: auto;
-}
-
-.message-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.message-row {
-  display: flex;
-}
-
-.message-row.outbound {
-  justify-content: flex-end;
-}
-
-.message-row.inbound {
-  justify-content: flex-start;
-}
-
-.message-bubble {
-  max-width: 85%;
-  border-radius: 24px;
-  padding: 14px 16px;
-}
-
-.message-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-1);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.message-meta {
-  margin-top: 10px;
-  color: var(--text-4);
-  font-size: 11px;
-}
-
-@media (max-width: 1180px) {
-  .conversation-summary-grid,
-  .pending-reply-grid,
-  .group-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 920px) {
-  .conversation-hero,
-  .conversation-panel-head {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .conversation-filters-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .conversation-filters-grid,
-  .conversation-summary-grid,
-  .pending-reply-grid,
-  .group-grid {
-    grid-template-columns: 1fr;
-  }
-}
+@media (max-width: 900px) { .conv-main { grid-template-columns: 1fr; } .ai-fields { grid-template-columns: 1fr 1fr; } }
 </style>

@@ -22,7 +22,7 @@
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-eyebrow">核心模块</div>
+        <div class="sidebar-eyebrow">业务模块</div>
         <nav class="sidebar-nav">
           <router-link
             v-for="item in primaryNavItems"
@@ -45,7 +45,7 @@
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-eyebrow">基础数据</div>
+        <div class="sidebar-eyebrow">系统设置</div>
         <nav class="sidebar-nav">
           <router-link
             v-for="item in secondaryNavItems"
@@ -194,24 +194,17 @@ const IconDashboard = mkIcon([
   h('rect', { x: '1.5', y: '9.5', width: '5', height: '5', rx: '1' }),
   h('rect', { x: '9.5', y: '9.5', width: '5', height: '5', rx: '1' }),
 ])
-const IconProjects = mkIcon([
-  h('path', { d: 'M2 4.5h12M2 8h12M2 11.5h8' }),
-  h('circle', { cx: '13', cy: '11.5', r: '1', fill: 'currentColor', stroke: 'none' }),
-])
 const IconConversations = mkIcon([
   h('path', { d: 'M2.5 4.5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H8l-3.5 2v-2H4.5a2 2 0 01-2-2v-4z', 'stroke-linejoin': 'round' }),
   h('path', { d: 'M5 6.5h6M5 8.8h4' }),
 ])
-const IconTargets = mkIcon([
+const IconContacts = mkIcon([
   h('circle', { cx: '8', cy: '8', r: '6' }),
   h('circle', { cx: '8', cy: '8', r: '3' }),
   h('circle', { cx: '8', cy: '8', r: '0.8', fill: 'currentColor', stroke: 'none' }),
 ])
-const IconSegments = mkIcon([
-  h('circle', { cx: '5', cy: '5', r: '1.5' }),
-  h('circle', { cx: '11', cy: '5', r: '1.5' }),
-  h('circle', { cx: '8', cy: '10.5', r: '1.5' }),
-  h('path', { d: 'M6.2 6.2l1 2.2M9.8 6.2l-1 2.2M6.6 10.9h2.8' }),
+const IconSend = mkIcon([
+  h('path', { d: 'M2 8l12-5-5 12-2-5z', 'stroke-linejoin': 'round' }),
 ])
 const IconAccounts = mkIcon([
   h('circle', { cx: '8', cy: '5', r: '2.5' }),
@@ -224,29 +217,26 @@ const IconSettings = mkIcon([
 ])
 
 const primaryNavItems = [
-  { path: '/dashboard', label: '监控概览', note: '系统状态与执行指标', icon: IconDashboard },
-  { path: '/projects', label: '项目管理', note: '项目清单与执行入口', icon: IconProjects },
-  { path: '/conversations', label: '会话管理', note: '回复流转与人工处理', icon: IconConversations },
+  { path: '/dashboard', label: '总览', note: '系统状态与执行指标', icon: IconDashboard },
+  { path: '/contacts', label: '联系人', note: '管理与导入联系人名单', icon: IconContacts },
+  { path: '/send', label: '发送', note: '批量发送私信', icon: IconSend },
+  { path: '/conversations', label: '对话与跟进', note: '回复分析与数据导出', icon: IconConversations },
 ]
 
 const secondaryNavItems = [
-  { path: '/targets', label: '目标数据', note: '目标名单与去重结果', icon: IconTargets },
-  { path: '/segments', label: '目标分组', note: '筛选后的执行集合', icon: IconSegments },
+  { path: '/templates', label: '消息模板', note: '触达序列模板', icon: IconTemplates },
   { path: '/accounts', label: '账号管理', note: '账号健康与资源分配', icon: IconAccounts },
-  { path: '/templates', label: '模板管理', note: '触达序列模板', icon: IconTemplates },
-  { path: '/settings', label: '策略配置', note: '全局策略与阈值', icon: IconSettings },
+  { path: '/settings', label: '设置', note: '全局策略与 AI 配置', icon: IconSettings },
 ]
 
 const titleMap = {
-  dashboard: '监控概览',
-  projects: '项目管理',
-  'project-detail': '项目详情',
-  conversations: '会话管理',
-  targets: '目标数据',
-  segments: '目标分组',
+  dashboard: '总览',
+  contacts: '联系人',
+  send: '发送',
+  conversations: '对话与跟进',
+  templates: '消息模板',
   accounts: '账号管理',
-  templates: '模板管理',
-  settings: '策略配置',
+  settings: '设置',
 }
 
 const currentTitle = computed(() => titleMap[route.name] || route.meta?.title || '触达管理平台')
@@ -270,9 +260,6 @@ const runState = computed(() => {
 })
 
 const isActive = (path) => {
-  if (path === '/projects') {
-    return route.path === '/projects' || route.path.startsWith('/projects/')
-  }
   return route.path === path || route.path.startsWith(`${path}/`)
 }
 

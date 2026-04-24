@@ -39,6 +39,8 @@ from database import (
 )
 from feishu import get_all_accounts, get_all_targets, get_pending_targets, get_token, now_ms, reset_daily_counts, update_account, update_target
 from message_gen import TEMPLATE_TYPE_STEP_1, TEMPLATE_TYPE_STEP_2, TEMPLATE_TYPE_STEP_3, generate
+from nickname_gen import extract_nickname
+from reply_analyzer import analyze_reply
 from notifier import send_feishu_reply_notification
 from playwright_agent import send_dm
 from reply_checker import check_account_replies
@@ -86,13 +88,13 @@ HEALTH_STOP_THRESHOLD = 20
 
 def _project_sequence_settings(project_obj: Optional[Any]) -> dict:
     return {
-        "step_1_template_id": str(getattr(project_obj, "sequence_step_1_template_id", "") or getattr(project_obj, "template_id", "") or ""),
-        "step_2_template_id": str(getattr(project_obj, "sequence_step_2_template_id", "") or getattr(project_obj, "followup_template_id", "") or ""),
-        "step_3_template_id": str(getattr(project_obj, "sequence_step_3_template_id", "") or getattr(project_obj, "followup_template_id", "") or ""),
-        "step_2_enabled": bool(getattr(project_obj, "sequence_step_2_enabled", getattr(project_obj, "followup_enabled", True))),
-        "step_3_enabled": bool(getattr(project_obj, "sequence_step_3_enabled", getattr(project_obj, "followup_enabled", True))),
-        "step_2_delay_days": max(1, int(getattr(project_obj, "sequence_step_2_delay_days", 3) or 3)),
-        "step_3_delay_days": max(1, int(getattr(project_obj, "sequence_step_3_delay_days", 5) or 5)),
+        "step_1_template_id": "",
+        "step_2_template_id": "",
+        "step_3_template_id": "",
+        "step_2_enabled": True,
+        "step_3_enabled": True,
+        "step_2_delay_days": 3,
+        "step_3_delay_days": 5,
     }
 
 
@@ -627,10 +629,8 @@ def _notify_pending_replies() -> None:
 
 
 def _mark_target_done(token: Optional[str], target: dict, new_status: str, sent_by: str, fail_reason: str = "") -> None:
-    project_target_id = str(target.get("project_target_id") or "").strip()
-    sync_source_status = not bool(project_target_id)
     record_id = target.get("record_id") or target.get("id", "")
-    if sync_source_status and str(record_id).startswith("local_"):
+    if str(record_id).startswith("local_"):
         update_local_target(
             str(record_id),
             {
@@ -640,9 +640,8 @@ def _mark_target_done(token: Optional[str], target: dict, new_status: str, sent_
                 "fail_reason": fail_reason,
             },
         )
-    elif sync_source_status:
+    else:
         if not token:
-            # no token means feishu cannot be updated; keep only log
             add_log("WARN", "system", str(record_id), "feishu_skip", "飞书不可用，无法回写飞书状态")
         else:
             update_target(
@@ -656,29 +655,9 @@ def _mark_target_done(token: Optional[str], target: dict, new_status: str, sent_
                 },
             )
 
-    if project_target_id and new_status != "已发送":
-        from project_manager import mark_project_target_sent
-
-        mark_project_target_sent(
-            project_target_id,
-            status=new_status,
-            sent_by=sent_by,
-            fail_reason=fail_reason,
-        )
-
 
 def _mark_target_replied(token: Optional[str], target_id: str, target_source: str, reply_preview: str) -> None:
-    project_target_id = ""
-    from project_manager import get_project_target_by_source, mark_project_target_replied
-
-    project_target = get_project_target_by_source(target_id, target_source)
-    if project_target:
-        project_target_id = str(project_target.get("id") or "")
-        mark_project_target_replied(project_target_id, reply_preview)
-
     preview = str(reply_preview or "")[:500]
-    if project_target_id:
-        return
     if str(target_source or "local") == "local" and str(target_id).startswith("local_"):
         update_local_target(
             str(target_id),
@@ -704,12 +683,6 @@ def _mark_target_replied(token: Optional[str], target_id: str, target_source: st
 
 
 def _set_target_status_only(token: Optional[str], target_id: str, target_source: str, status: str) -> None:
-    from project_manager import get_project_target_by_source, set_project_target_status
-
-    project_target = get_project_target_by_source(target_id, target_source)
-    if project_target:
-        set_project_target_status(str(project_target.get("id") or ""), status)
-        return
     if str(target_source or "local") == "local" and str(target_id).startswith("local_"):
         update_local_target(str(target_id), {"status": status})
         return
@@ -884,7 +857,6 @@ def preview_followups() -> dict:
     ready_count = 0
     skipped_missing = 0
     skipped_account = 0
-    skipped_project = 0
 
     for conv in candidates:
         target = target_map.get(str(conv.get("target_id") or ""))
@@ -897,19 +869,7 @@ def preview_followups() -> dict:
             continue
         step = int(conv.get("next_sequence_step") or 0)
         if step not in {2, 3}:
-            skipped_project += 1
             continue
-        if str(conv.get("project_id") or "").strip():
-            from project_manager import get_project
-
-            project_obj = get_project(str(conv.get("project_id") or ""))
-            sequence_cfg = _project_sequence_settings(project_obj)
-            if step == 2 and not sequence_cfg["step_2_enabled"]:
-                skipped_project += 1
-                continue
-            if step == 3 and not sequence_cfg["step_3_enabled"]:
-                skipped_project += 1
-                continue
         ready_count += 1
 
     return {
@@ -917,7 +877,6 @@ def preview_followups() -> dict:
         "ready_count": ready_count,
         "skipped_missing": skipped_missing,
         "skipped_account": skipped_account,
-        "skipped_project": skipped_project,
         "followup_days": int(settings.followup_days or 0),
         "message": "暂无满足条件的后续触达对象" if ready_count <= 0 else f"预计执行 {ready_count} 条后续触达",
     }
@@ -953,17 +912,18 @@ def _run_targets(
         return
 
     for target in targets:
-        if project_id:
-            from project_manager import is_project_send_enabled
-
-            if not is_project_send_enabled(project_id):
-                add_log("INFO", "system", "", "project_stop", f"{batch_name}: 项目已暂停，结束本轮发送")
-                break
         if respect_switch and (not _running or _paused):
             break
 
         username = target.get("twitter_username", "")
         project = target.get("project_name") or "your project"
+        display_name = str(target.get("display_name") or "").strip()
+        nickname = str(target.get("nickname") or "").strip()
+        if not nickname and display_name:
+            nickname = extract_nickname(display_name)
+            record_id = str(target.get("record_id") or target.get("id", ""))
+            if record_id.startswith("local_"):
+                update_local_target(record_id, {"nickname": nickname})
         sequence_cfg = {
             "step_1_template_id": str(target.get("sequence_step_1_template_id") or target.get("template_id") or ""),
             "step_2_enabled": bool(target.get("sequence_step_2_enabled", target.get("followup_enabled", True))),
@@ -1003,6 +963,7 @@ def _run_targets(
                 template_type=TEMPLATE_TYPE_STEP_1,
                 handle=username,
                 template_id=sequence_cfg["step_1_template_id"],
+                nickname=nickname,
             )
             add_log("INFO", acc_name, username, "starting", f"{batch_name} 开始发送尝试#{attempts} -> @{username}")
 
@@ -1030,19 +991,8 @@ def _run_targets(
                         next_followup_at=next_followup_at,
                         segment_id=segment_id, segment_name=segment_name,
                         client_group=client_group or str(target.get("client_group") or ""),
-                        project_id=project_id or str(target.get("project_id") or ""),
-                        project_target_id=str(target.get("project_target_id") or ""),
                         project_name=project,
                     )
-                    if str(target.get("project_target_id") or "").strip():
-                        from project_manager import mark_project_target_sent
-
-                        mark_project_target_sent(
-                            str(target.get("project_target_id") or ""),
-                            status="已发送",
-                            sent_by=acc_name,
-                            conversation_id=conversation_id,
-                        )
                     _status["today_total_sent"] += 1
                     add_log("SUCCESS", acc_name, username, "sent", "发送成功", meta=result)
                     completed = True
@@ -1186,33 +1136,12 @@ def auto_followup(wait_between: bool = True, trigger: str = "scheduled") -> dict
                 continue
             template_type = _sequence_template_type(step)
             template_id = ""
-            sequence_cfg = {
-                "step_2_enabled": True,
-                "step_3_enabled": True,
-                "step_2_delay_days": 3,
-                "step_3_delay_days": 5,
-            }
-            if str(conv.get("project_id") or "").strip():
-                from project_manager import get_project
-
-                project_obj = get_project(str(conv.get("project_id") or ""))
-                if project_obj:
-                    sequence_cfg = _project_sequence_settings(project_obj)
-                    if step == 2 and not sequence_cfg["step_2_enabled"]:
-                        add_log("INFO", "system", username, "followup_skip", "项目未启用第二步触达")
-                        summary["skipped"] += 1
-                        continue
-                    if step == 3 and not sequence_cfg["step_3_enabled"]:
-                        add_log("INFO", "system", username, "followup_skip", "项目未启用第三步触达")
-                        summary["skipped"] += 1
-                        continue
-                    template_id = sequence_cfg[f"step_{step}_template_id"]
             next_step, next_followup_at = _resolve_next_sequence_state(
                 step,
-                sequence_step_2_enabled=sequence_cfg["step_2_enabled"],
-                sequence_step_3_enabled=sequence_cfg["step_3_enabled"],
-                sequence_step_2_delay_days=sequence_cfg["step_2_delay_days"],
-                sequence_step_3_delay_days=sequence_cfg["step_3_delay_days"],
+                sequence_step_2_enabled=True,
+                sequence_step_3_enabled=True,
+                sequence_step_2_delay_days=3,
+                sequence_step_3_delay_days=5,
             )
             message = generate(project, template_type=template_type, handle=username, template_id=template_id)
             summary["ready_count"] += 1
@@ -1241,19 +1170,8 @@ def auto_followup(wait_between: bool = True, trigger: str = "scheduled") -> dict
                         next_followup_at=next_followup_at,
                         segment_id=str(target.get("segment_id") or ""),
                         segment_name=str(target.get("segment_name") or ""),
-                        project_id=str(conv.get("project_id") or target.get("project_id") or ""),
-                        project_target_id=str(conv.get("project_target_id") or target.get("project_target_id") or ""),
                         project_name=project,
                     )
-                    if str(conv.get("project_target_id") or target.get("project_target_id") or "").strip():
-                        from project_manager import mark_project_target_sent
-
-                        mark_project_target_sent(
-                            str(conv.get("project_target_id") or target.get("project_target_id") or ""),
-                            status="已发送",
-                            sent_by=acc_name,
-                            conversation_id=conversation_id,
-                        )
                     add_log("SUCCESS", acc_name, username, "followup_sent", f"第 {step} 步触达发送成功", meta=result)
                     summary["sent"] += 1
                 elif status == "captcha":
@@ -1445,15 +1363,25 @@ def check_replies(force: bool = False, include_replied: bool = False) -> None:
                     latest = new_inbound[-1]
                     preview = str(latest.get("content") or item.get("reply_preview") or "")
                     mark_conversation_reply(conversation_id, preview, last_box=box)
-                    project_target_id = str(item.get("project_target_id") or existing_conv.get("project_target_id") or "")
-                    if project_target_id:
-                        from project_manager import mark_project_target_replied
-
-                        mark_project_target_replied(
-                            project_target_id,
-                            preview,
-                            conversation_id=conversation_id,
-                        )
+                    # AI reply analysis
+                    try:
+                        all_reply_texts = [
+                            str(x.get("content") or "").strip()
+                            for x in item.get("messages") or []
+                            if str(x.get("direction") or "") == "inbound" and str(x.get("content") or "").strip()
+                        ]
+                        reply_text_for_analysis = "\n".join(all_reply_texts) if all_reply_texts else preview
+                        analysis = analyze_reply(reply_text_for_analysis)
+                        if analysis and analysis.get("summary"):
+                            import json as _json
+                            update_conversation(conversation_id, {
+                                "reply_analysis": _json.dumps(analysis, ensure_ascii=False),
+                                "extracted_email": str(analysis.get("email", "")),
+                                "extracted_telegram": str(analysis.get("telegram", "")),
+                                "extracted_pricing": str(analysis.get("pricing", "")),
+                            })
+                    except Exception:
+                        pass
                     current_status = str(existing_conv.get("status", "") or "")
                     if current_status == "manual_takeover":
                         _set_target_status_only(token, target_id, target_source, "人工接管")
@@ -1539,68 +1467,6 @@ def run_batch(wait_between: bool = True, use_warming: bool = True):
         _run_targets(targets, accounts, token, wait_between=wait_between, respect_switch=True, batch_name="batch")
     except Exception as e:
         add_log("ERROR", "system", "", "error", f"run_batch_failed: {e}")
-    finally:
-        _batch_lock.release()
-
-
-def run_batch_for_project(project_id: str, wait_between: bool = False):
-    if not _batch_lock.acquire(blocking=False):
-        add_log("WARN", "system", project_id, "busy", "project_run skipped: another batch is running")
-        return
-
-    try:
-        from project_manager import get_project, list_project_account_links, refresh_project_stats, resolve_project_targets
-
-        project = get_project(project_id)
-        if not project:
-            add_log("WARN", "system", project_id, "skip", "项目不存在")
-            return
-        if project.status != "running":
-            add_log("INFO", "system", project.name, "project_skip", "项目未处于运行中，跳过本轮发送")
-            return
-
-        token, all_accounts = _fetch_all_accounts()
-        account_ids = [str(item.get("account_id") or "") for item in list_project_account_links(project_id)]
-        selected_accounts = _select_accounts(all_accounts, account_ids)
-        targets = resolve_project_targets(project_id, status="待发送")
-
-        if project.warming_enabled:
-            warmed_targets = []
-            unwarmed_targets = []
-            for target in targets:
-                target_key = str(target.get("record_id") or "")
-                if target_key and is_target_warmed(target_key):
-                    warmed_targets.append(target)
-                else:
-                    unwarmed_targets.append(target)
-            if unwarmed_targets:
-                scheduled_count = schedule_warming_for_targets(unwarmed_targets, hours_before=6)
-                add_log("INFO", "system", project.name, "project_warming", f"项目预热队列新增 {scheduled_count} 个目标")
-            targets = warmed_targets
-
-        if not selected_accounts:
-            add_log("WARN", "system", project.name, "project_skip", "项目未匹配到可用账号")
-            return
-        if not targets:
-            add_log("INFO", "system", project.name, "project_skip", "项目暂无可发送目标")
-            refresh_project_stats(project_id)
-            return
-
-        _run_targets(
-            targets=targets,
-            accounts=selected_accounts,
-            token=token,
-            wait_between=wait_between,
-            respect_switch=True,
-            batch_name=f"project:{project.name}",
-            segment_id=project.segment_id,
-            segment_name=project.segment_name,
-            client_group=project.client_group,
-            project_id=project.id,
-        )
-        refresh_project_stats(project_id)
-    except Exception as exc:
-        add_log("ERROR", "system", project_id, "error", f"run_batch_for_project_failed: {exc}")
     finally:
         _batch_lock.release()
 

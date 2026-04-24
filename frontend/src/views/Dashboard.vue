@@ -3,7 +3,7 @@
     <div class="dashboard-hero card">
       <div class="dashboard-hero-copy">
         <div class="dashboard-kicker">Operations Overview</div>
-        <h2>系统监控概览</h2>
+        <h2>私信外联总览</h2>
         <div class="dashboard-hero-actions">
           <button class="btn btn-ghost" @click="reloadAccounts">刷新账号数据</button>
           <button class="btn btn-secondary" @click="checkReplies">同步回复状态</button>
@@ -28,7 +28,7 @@
             <strong>{{ system.status.active_accounts || 0 }}</strong>
           </div>
           <div>
-            <span>待处理目标</span>
+            <span>待联系</span>
             <strong>{{ system.status.pending_targets || 0 }}</strong>
           </div>
           <div>
@@ -47,7 +47,7 @@
       <StatCard title="当日发送量" :value="system.stats.today.sent" color="green" />
       <StatCard title="当日回复量" :value="system.stats.today.replies" color="green" />
       <StatCard title="可用账号数" :value="system.status.active_accounts" color="blue" />
-      <StatCard title="待处理目标数" :value="system.status.pending_targets" color="yellow" />
+      <StatCard title="待联系数" :value="system.status.pending_targets" color="yellow" />
       <StatCard title="当日异常数" :value="system.stats.today.errors" color="red" />
       <StatCard
         title="熔断状态"
@@ -129,7 +129,7 @@
       <div class="card dashboard-panel">
         <div class="dashboard-panel-head">
           <div>
-            <div class="section-title">触达漏斗</div>
+            <div class="section-title">发送漏斗</div>
           </div>
         </div>
         <div class="funnel-grid">
@@ -305,11 +305,10 @@ const healthColor = (score) => {
 }
 
 const funnelCards = computed(() => [
-  { label: '待发送', value: system.stats.funnel?.pending || 0, color: 'var(--text-1)' },
-  { label: '已触达', value: system.stats.funnel?.contacted || 0, color: '#77b7ff' },
+  { label: '未联系', value: system.stats.funnel?.pending || 0, color: 'var(--text-1)' },
+  { label: '已联系', value: system.stats.funnel?.contacted || 0, color: '#77b7ff' },
   { label: '已回复', value: system.stats.funnel?.replied || 0, color: '#62d99b' },
-  { label: '人工处理', value: system.stats.funnel?.manual_takeover || 0, color: '#f59e0b' },
-  { label: '已完成', value: system.stats.funnel?.completed || 0, color: '#c084fc' }
+  { label: '我来处理', value: system.stats.funnel?.manual_takeover || 0, color: '#f59e0b' },
 ])
 
 const trendOption = computed(() => {

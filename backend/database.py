@@ -35,6 +35,8 @@ TARGET_EXTRA_COLUMNS: Dict[str, str] = {
     "client_group": "TEXT DEFAULT ''",
     "client_note": "TEXT DEFAULT ''",
     "reply_content": "TEXT DEFAULT ''",
+    "display_name": "TEXT DEFAULT ''",
+    "nickname": "TEXT DEFAULT ''",
 }
 
 LOCAL_ACCOUNT_EXTRA_COLUMNS: Dict[str, str] = {
@@ -59,6 +61,10 @@ CONVERSATION_EXTRA_COLUMNS: Dict[str, str] = {
     "last_sequence_step": "INTEGER DEFAULT 0",
     "next_sequence_step": "INTEGER DEFAULT 2",
     "next_followup_at": "TEXT DEFAULT ''",
+    "reply_analysis": "TEXT DEFAULT ''",
+    "extracted_email": "TEXT DEFAULT ''",
+    "extracted_telegram": "TEXT DEFAULT ''",
+    "extracted_pricing": "TEXT DEFAULT ''",
 }
 
 RUNTIME_DEFAULTS: Dict[str, str] = {
@@ -87,7 +93,11 @@ RUNTIME_DEFAULTS: Dict[str, str] = {
     "feishu_app_token": "",
     "feishu_table_targets": "",
     "feishu_table_accounts": "",
+    "feishu_display_name_column": str(settings.feishu_display_name_column),
     "feishu_notify_webhook": "",
+    "openai_api_key": str(settings.openai_api_key),
+    "openai_model": str(settings.openai_model),
+    "twitter_password": str(settings.twitter_password),
 }
 
 
@@ -810,6 +820,8 @@ def update_local_target(target_id: str, fields: dict) -> None:
         "client_note",
         "reply_content",
         "twitter_username",
+        "display_name",
+        "nickname",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1284,6 +1296,10 @@ def update_conversation(conversation_id: str, fields: Dict[str, Any]) -> None:
         "next_sequence_step",
         "next_followup_at",
         "status",
+        "reply_analysis",
+        "extracted_email",
+        "extracted_telegram",
+        "extracted_pricing",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
